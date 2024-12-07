@@ -18,11 +18,13 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
@@ -30,7 +32,23 @@ import androidx.compose.ui.unit.sp
 import androidx.navigation.NavController
 import androidx.navigation.compose.rememberNavController
 import com.alparslanguney.example.nfc.R
+import com.alparslanguney.example.nfc.datasource.services.AuthService
+import com.alparslanguney.example.nfc.domain.dtos.Auth
+import com.alparslanguney.example.nfc.domain.use_cases.SharedPref
+import com.alparslanguney.example.nfc.util.Lock
 import com.alparslanguney.example.nfc.util.Screens
+import com.alparslanguney.example.nfc.util.Visibility
+import com.alparslanguney.example.nfc.util.Visibility_off
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import okhttp3.OkHttpClient
+import retrofit2.Retrofit
+import retrofit2.converter.gson.GsonConverterFactory
+import java.security.SecureRandom
+import java.security.cert.X509Certificate
+import javax.net.ssl.SSLContext
+import javax.net.ssl.X509TrustManager
 
 @Composable
 fun LoginScreen(innerPadding: PaddingValues, navController: NavController){
@@ -40,6 +58,11 @@ fun LoginScreen(innerPadding: PaddingValues, navController: NavController){
     var password by remember {
         mutableStateOf("")
     }
+    var isPasswordVisible by remember {
+        mutableStateOf(false)
+    }
+    val scope = rememberCoroutineScope()
+    val sharedPref = SharedPref(LocalContext.current)
     // Creación de FocusRequester para los dos campos
     val passwordFocusRequester = remember { FocusRequester() }
     val focusManager = LocalFocusManager.current
@@ -89,7 +112,8 @@ fun LoginScreen(innerPadding: PaddingValues, navController: NavController){
             value = password,
             onValueChange = {password = it},
             placeholder = { Text("Contraseña") },
-            visualTransformation = PasswordVisualTransformation(),
+            visualTransformation = if (!isPasswordVisible) PasswordVisualTransformation() else
+                VisualTransformation.None,
             modifier = Modifier.fillMaxWidth().focusRequester(passwordFocusRequester),
             shape = RoundedCornerShape(24.dp),
             colors = OutlinedTextFieldDefaults.colors(
@@ -102,7 +126,23 @@ fun LoginScreen(innerPadding: PaddingValues, navController: NavController){
                     // Cierra el teclado virtual
                     focusManager.clearFocus()
                 }
-            )
+            ),
+            leadingIcon = {
+                Icon(imageVector = Lock, contentDescription = "pass")
+            },
+            trailingIcon = {
+                IconButton(
+                    onClick = {
+                        isPasswordVisible = !isPasswordVisible
+                    },
+                    content = {
+                        val icon = if(!isPasswordVisible) Visibility else Visibility_off
+                        Icon(imageVector = icon,
+                            contentDescription = "Ver", )
+                    }
+                )
+
+            }
         )
         Spacer(
             modifier = Modifier.height(16.dp)
@@ -117,8 +157,61 @@ fun LoginScreen(innerPadding: PaddingValues, navController: NavController){
                 disabledContainerColor = MaterialTheme.colorScheme.onSurface
             ),
             onClick = {
-                navController.navigate(Screens.ExerciseSelectScreen.route)
+                scope.launch(Dispatchers.IO) {
+                    try {
+                        // Configurar cliente OkHttp que confía en todos los certificados (no recomendado en producción)
+                        val trustAllCerts = arrayOf<javax.net.ssl.TrustManager>(
+                            object : X509TrustManager {
+                                override fun checkClientTrusted(chain: Array<X509Certificate>, authType: String) {}
+                                override fun checkServerTrusted(chain: Array<X509Certificate>, authType: String) {}
+                                override fun getAcceptedIssuers(): Array<X509Certificate> = arrayOf()
+                            }
+                        )
 
+                        val sslContext = SSLContext.getInstance("TLS").apply {
+                            init(null, trustAllCerts, SecureRandom())
+                        }
+
+                        val okHttpClient = OkHttpClient.Builder()
+                            .sslSocketFactory(sslContext.socketFactory, trustAllCerts[0] as X509TrustManager)
+                            .hostnameVerifier { _, _ -> true }
+                            .build()
+
+                        // Configurar Retrofit con el cliente personalizado
+                        val authService = Retrofit.Builder()
+                            .baseUrl("https://157.230.187.109/")
+                            .client(okHttpClient) // Integra el cliente aquí
+                            .addConverterFactory(GsonConverterFactory.create())
+                            .build()
+                            .create(AuthService::class.java)
+
+                        // Lógica de autenticación
+                        val auth = Auth(email = email, password = password)
+                        val response = authService.login(auth)
+
+                        if (response.isSuccessful) {
+                            val responseBody = response.body()
+                            Log.i("LoginScreen", "Response: $responseBody")
+                            if (responseBody?.isLogged == true) {
+                                withContext(Dispatchers.Main) {
+                                    sharedPref.saveUserSharedPref(
+                                        userId = response.body()?.userId ?: 0,
+                                        isLogged = true
+                                    )
+                                    navController.navigate(Screens.ExerciseSelectScreen.route){
+                                        popUpTo(Screens.ExerciseSelectScreen.route) { inclusive=true }
+                                    }
+                                }
+                            } else {
+                                Log.e("LoginScreen", "Login failed: ${responseBody?.message}")
+                            }
+                        } else {
+                            Log.e("LoginScreen", "HTTP Error: ${response.code()}")
+                        }
+                    } catch (e: Exception) {
+                        Log.e("LoginScreen", "Exception: ${e.message}")
+                    }
+                }
             },
         ){
             Text(
@@ -137,7 +230,7 @@ fun LoginScreen(innerPadding: PaddingValues, navController: NavController){
             color = Color.Gray,
             modifier = Modifier.clickable {
                 Log.i("Login","navegar")
-                navController.navigate(Screens.StatsScreen.route)
+                navController.navigate(Screens.ExerciseSelectScreen.route)
             }
         )
     }

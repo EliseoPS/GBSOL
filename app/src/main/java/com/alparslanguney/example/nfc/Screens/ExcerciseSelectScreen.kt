@@ -18,6 +18,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.input.ImeAction
@@ -28,11 +29,15 @@ import androidx.compose.ui.unit.sp
 import androidx.navigation.NavController
 import androidx.navigation.compose.rememberNavController
 import com.alparslanguney.example.nfc.R
+import com.alparslanguney.example.nfc.domain.use_cases.SharedPref
+import com.alparslanguney.example.nfc.util.Logout
 import com.alparslanguney.example.nfc.util.Screens
 
 
 @Composable
 fun ExerciseSelectScreen(innerPadding: PaddingValues, navController: NavController){
+    val sharedPref = SharedPref(LocalContext.current)
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -42,6 +47,27 @@ fun ExerciseSelectScreen(innerPadding: PaddingValues, navController: NavControll
         verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally
     ){
+        Row(
+            modifier = Modifier.fillMaxWidth()
+        ){
+            Text(
+                text = "Hola: ",
+                style = MaterialTheme.typography.titleLarge
+            )
+            IconButton(onClick = {
+                sharedPref.removeUserSharedPref()
+                navController.navigate(Screens.LoginScreen.route){
+                    popUpTo(Screens.LoginScreen.route) { inclusive = true }
+                }
+            }){
+                Icon(
+                    imageVector = Logout,
+                    contentDescription = "salir",
+                    modifier = Modifier.size(30.dp)
+                )
+            }
+
+        }
         Text(
             text = "Seleccione una opción:",
             style = MaterialTheme.typography.titleLarge,
